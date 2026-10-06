@@ -139,8 +139,9 @@ work on them as well ("beach", "birthday cake", a person's name).
   differs from it, or shows a sharp edge, is treated as photo. Each blob becomes one photo, and its
   tilted rectangle is straightened and trimmed slightly so no lid shows at the edges
   (`photopilot/detect.py`).
-* **Duplicates**: each photo gets a perceptual hash (in all four orientations). A re-scan of a
-  photo that's already done is skipped even if it's turned around. Immich also refuses
+* **Duplicates**: each photo gets a 255-bit perceptual hash (in all four orientations). A re-scan of a
+  photo that's already done is not uploaded again, even if it's turned around. It is still saved
+  in `<out>/duplicates`, so a wrong guess never loses a photo. Immich also refuses
   byte-identical uploads.
 * **Dates**: written into the JPEG's EXIF `DateTimeOriginal`, so the photo sits at the right place
   on Immich's timeline.

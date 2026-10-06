@@ -26,7 +26,7 @@ def report(res, source: str) -> None:
     print(f"{source}: found {res.found} photo(s), saved {len(res.saved)}"
           + (f", skipped {len(res.duplicates)} already scanned" if res.duplicates else ""))
     for n, existing in res.duplicates:
-        print(f"  = photo {n} looks like {existing}")
+        print(f"  = photo {n} looks like {existing} (kept in 'duplicates', not uploaded)")
     if res.found == 0:
         print("  (nothing detected - is the lid closed and are the photos on the glass?)")
 

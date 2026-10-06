@@ -28,9 +28,12 @@ def parse_date(text: str) -> datetime:
     return datetime(y, mo, d, 12, 0, 0)
 
 
-def phash(gray32: np.ndarray) -> int:
-    """Perceptual hash of a 32x32 grayscale image: similar pictures give similar bits."""
-    low = cv2.dct(gray32.astype(np.float32))[:8, :8].flatten()[1:]  # coarse structure, no DC
+HASH_SIDE = 16  # 16x16 DCT -> 255-bit hash; 8x8 (63 bits) confused look-alike photos
+
+
+def phash(gray: np.ndarray) -> int:
+    """Perceptual hash of a square grayscale image: similar pictures give similar bits."""
+    low = cv2.dct(gray.astype(np.float32))[:HASH_SIDE, :HASH_SIDE].flatten()[1:]  # no DC term
     bits = low > np.median(low)
     return int("".join("1" if b else "0" for b in bits), 2)
 
@@ -38,7 +41,7 @@ def phash(gray32: np.ndarray) -> int:
 def rotation_hashes(img: np.ndarray) -> list[int]:
     """Hashes of the photo at 0/90/180/270 deg, so a re-scan in another orientation still matches."""
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
-    sq = cv2.resize(gray, (32, 32), interpolation=cv2.INTER_AREA)
+    sq = cv2.resize(gray, (HASH_SIDE * 4, HASH_SIDE * 4), interpolation=cv2.INTER_AREA)
     return [phash(np.rot90(sq, k).copy()) for k in range(4)]
 
 
@@ -51,7 +54,9 @@ class Settings:
     dpi: int = 600
     min_area: float = 0.01
     sensitivity: float = 1.0
-    dedupe_distance: int = 8  # max differing hash bits to call two photos the same
+    # Max differing bits (of 255) to call two photos the same. Measured: the same print
+    # re-scanned differs by <= ~15, different photos (even similar scenes) by >= ~60.
+    dedupe_distance: int = 32
     keep_beds: bool = True
     immich: Immich | None = None
 
@@ -60,7 +65,7 @@ class Settings:
 class State:
     """Remembers what was saved / uploaded, so re-runs and retries are safe."""
     path: Path
-    hashes: dict[str, int] = field(default_factory=dict)  # photo file -> perceptual hash
+    hashes: dict[str, str] = field(default_factory=dict)  # photo file -> perceptual hash (hex)
     uploaded: dict[str, str] = field(default_factory=dict)  # photo file -> Immich asset id
     taken: dict[str, str] = field(default_factory=dict)  # photo file -> ISO date for Immich
     albums: dict[str, str] = field(default_factory=dict)  # photo file -> album name
@@ -86,7 +91,8 @@ class State:
 
     def find_duplicate(self, hashes: list[int], max_dist: int) -> str | None:
         for name, h in self.hashes.items():
-            if any(bin(h ^ x).count("1") <= max_dist for x in hashes):
+            known = int(h, 16)
+            if any(bin(known ^ x).count("1") <= max_dist for x in hashes):
                 return name
         return None
 
@@ -130,11 +136,15 @@ def process_bed(scan: np.ndarray, name: str, s: Settings, state: State) -> Resul
         hashes = rotation_hashes(photo.image)
         dup = state.find_duplicate(hashes, s.dedupe_distance)
         if dup:
+            # Not uploaded, but kept: if the guess was wrong, nothing is lost.
+            dup_dir = s.out_dir / "duplicates"
+            dup_dir.mkdir(exist_ok=True)
+            save_jpeg(photo.image, dup_dir / f"{name}-{i:02d}.jpg", taken, s.quality, s.dpi)
             res.duplicates.append((i, dup))
             continue
         out = s.out_dir / f"{name}-{i:02d}.jpg"
         save_jpeg(photo.image, out, taken, s.quality, s.dpi)
-        state.hashes[out.name] = hashes[0]
+        state.hashes[out.name] = format(hashes[0], "x")
         state.taken[out.name] = taken.isoformat()
         if s.album:
             state.albums[out.name] = s.album
