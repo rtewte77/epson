@@ -3,6 +3,7 @@ import sys
 import types
 
 import cv2
+import pytest
 
 from photopilot import scanner
 
@@ -79,8 +80,9 @@ def test_wia_scan(monkeypatch, tmp_path):
     install_fake(monkeypatch, info)
 
     assert scanner.list_devices() == [(FakeInfo.DeviceID, "EPSON Perfection V850")]
-    img = scanner.scan(tmp_path / "bed.bmp", device="v850", dpi=600)
+    img = scanner.scan(device="v850", dpi=600, keep_as=tmp_path / "raw.bmp")
     assert img.shape == bed.shape
+    assert (tmp_path / "raw.bmp").exists()
 
     dev = info.dev
     props = {str(p.PropertyID): p.Value for p in dev.Items[1].Properties}
@@ -92,8 +94,25 @@ def test_wia_scan(monkeypatch, tmp_path):
 def test_wia_unknown_device(monkeypatch, tmp_path):
     install_fake(monkeypatch, FakeInfo(make_bed(245)[0]))
     try:
-        scanner.scan(tmp_path / "x.bmp", device="V39")
+        scanner.scan(device="V39")
     except scanner.ScannerError as e:
         assert "V39" in str(e)
     else:
         raise AssertionError("expected ScannerError")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="SANE path is for Linux/macOS")
+def test_sane_scan_in_memory(monkeypatch, tmp_path):
+    bed, _ = make_bed(245)
+    src = tmp_path / "bed.tif"
+    cv2.imwrite(str(src), bed)
+    fake = tmp_path / "bin" / "scanimage"
+    fake.parent.mkdir()
+    fake.write_text(f'#!/bin/sh\necho "$@" > "{tmp_path}/args"\ncat "{src}"\n')
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake.parent}:/usr/bin:/bin")
+    img = scanner.scan(device="epson2:libusb:001:004", dpi=1200)
+    assert img.shape == bed.shape
+    args = (tmp_path / "args").read_text()
+    assert "--resolution 1200" in args and "-d epson2:libusb:001:004" in args
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["args", "bed.tif", "bin"]  # no temp files

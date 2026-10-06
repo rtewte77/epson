@@ -1,3 +1,3 @@
-"""photo-pilot: flatbed scan -> individual photos -> Immich."""
+"""photo-pilot: flatbed scan -> one full-resolution file per photo."""
 
 __version__ = "0.1.0"

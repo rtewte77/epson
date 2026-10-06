@@ -1,7 +1,7 @@
-"""Settings remembered between runs, so a double-clicked program needs no options.
+"""Settings remembered between runs, and where the program keeps its own files.
 
-Windows: %APPDATA%\\photo-pilot\\config.json
-Linux:   ~/.config/photo-pilot/config.json
+Windows: %APPDATA%\\photo-pilot\\
+Linux:   ~/.config/photo-pilot/
 """
 
 from __future__ import annotations
@@ -12,12 +12,21 @@ import sys
 from pathlib import Path
 
 
-def config_path() -> Path:
+def app_dir() -> Path:
     if sys.platform == "win32":
         base = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
     else:
         base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-    return base / "photo-pilot" / "config.json"
+    return base / "photo-pilot"
+
+
+def config_path() -> Path:
+    return app_dir() / "config.json"
+
+
+def preview_dir() -> Path:
+    """Detection previews live here, NOT in the photo folder (Immich would import them)."""
+    return app_dir() / "previews"
 
 
 def default_out_dir() -> Path:

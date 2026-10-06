@@ -1,78 +1,21 @@
-import json
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import builtins
+import time
 
 import cv2
 import numpy as np
 import pytest
 from PIL import Image
 
-from photopilot.cli import main
-from photopilot.pipeline import State, parse_date
+from photopilot import config, scanner
+from photopilot.cli import Watcher, main
+from photopilot.pipeline import Settings, parse_date
 
 from .test_detect import make_bed
 
 
-class FakeImmich(BaseHTTPRequestHandler):
-    assets: list = []
-    albums: dict = {}
-    version = 3  # 3: current API (strict, no device fields); 1: old API (device fields required)
-
-    def log_message(self, *a):
-        pass
-
-    def _send(self, code, body):
-        data = json.dumps(body).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def _body(self):
-        return self.rfile.read(int(self.headers.get("Content-Length", 0)))
-
-    def do_GET(self):
-        if self.headers.get("x-api-key") != "secret":
-            return self._send(401, {"message": "bad key"})
-        if self.path == "/api/albums":
-            return self._send(200, [{"id": k, "albumName": v["name"]} for k, v in self.albums.items()])
-        self._send(200, {"res": "pong"})
-
-    def do_POST(self):
-        body = self._body()
-        if self.path == "/api/assets":
-            assert b'name="fileCreatedAt"' in body and b'name="assetData"' in body
-            has_device = b'name="deviceAssetId"' in body
-            if self.version >= 3 and has_device:
-                return self._send(400, {"message": ["property deviceAssetId should not exist"]})
-            if self.version < 3 and not has_device:
-                return self._send(400, {"message": ["deviceAssetId should not be empty"]})
-            checksum = self.headers["x-immich-checksum"]
-            for a in self.assets:
-                if a == checksum:
-                    return self._send(200, {"id": f"a{self.assets.index(a)}", "status": "duplicate"})
-            self.assets.append(checksum)
-            return self._send(201, {"id": f"a{len(self.assets) - 1}", "status": "created"})
-        if self.path == "/api/albums":
-            aid = f"album{len(self.albums)}"
-            self.albums[aid] = {"name": json.loads(body)["albumName"], "assets": []}
-            return self._send(201, {"id": aid})
-        self._send(404, {})
-
-    def do_PUT(self):
-        aid = self.path.split("/")[3]
-        self.albums[aid]["assets"] += json.loads(self._body())["ids"]
-        self._send(200, [])
-
-
-@pytest.fixture(params=[3, 1], ids=["immich-v3", "immich-v1"])
-def immich(request):
-    FakeImmich.assets, FakeImmich.albums, FakeImmich.version = [], {}, request.param
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeImmich)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{srv.server_port}"
-    srv.shutdown()
+def write_png(path, img):
+    ok, buf = cv2.imencode(".png", img)
+    buf.tofile(str(path))
 
 
 def test_parse_date():
@@ -83,72 +26,29 @@ def test_parse_date():
         parse_date("July 85")
 
 
-def test_import_upload_and_dedupe(tmp_path, immich):
+def test_import_saves_full_resolution_photos(tmp_path):
     bed, specs = make_bed(245)
-    scans = tmp_path / "scans"
-    scans.mkdir()
-    cv2.imwrite(str(scans / "bed1.tif"), bed)
+    write_png(tmp_path / "bed1.png", bed)
     out = tmp_path / "photos"
-    base = ["--out", str(out), "--immich-url", immich, "--api-key", "secret"]
+    main(["import", str(tmp_path / "bed1.png"), "--out", str(out), "--date", "1978-07"])
 
-    main(["import", str(scans), *base, "--album", "Holiday 1978", "--date", "1978-07"])
-
-    photos = sorted(out.glob("bed1-*.jpg"))
-    assert len(photos) == len(specs)
-    exif = Image.open(photos[0]).getexif()
-    assert exif.get_ifd(0x8769)[0x9003] == "1978:07:01 12:00:00"
-    assert len(FakeImmich.assets) == len(specs)
-    (album,) = FakeImmich.albums.values()
-    assert album["name"] == "Holiday 1978" and len(album["assets"]) == len(specs)
-    assert (out / "beds" / "bed1-detected.jpg").exists()
-
-    # Same folder again: skipped as already imported.
-    main(["import", str(scans), *base])
-    assert len(FakeImmich.assets) == len(specs)
-
-    # Same photos re-scanned (slightly different noise, one turned upside down): recognised as duplicates.
-    rescan = np.clip(bed.astype(int) + np.random.default_rng(1).integers(-3, 4, bed.shape), 0, 255)
-    rescan = np.rot90(rescan.astype(np.uint8), 2).copy()
-    cv2.imwrite(str(scans / "bed2.tif"), rescan)
-    main(["import", str(scans / "bed2.tif"), *base])
-    assert not list(out.glob("bed2-*.jpg"))
-    assert len(FakeImmich.assets) == len(specs)
+    photos = sorted(out.iterdir())
+    # Only the photos land in the folder: no previews, temp files or bookkeeping.
+    assert [p.name for p in photos] == [f"bed1-{i:02d}.jpg" for i in range(1, len(specs) + 1)]
+    for p, (_, (w, h), _) in zip(photos, specs):
+        im = Image.open(p)
+        assert sorted(im.size) == pytest.approx(sorted((w, h)), rel=0.05)  # not downscaled
+        assert im.getexif().get_ifd(0x8769)[0x9003] == "1978:07:01 12:00:00"
+    assert (config.preview_dir() / "bed1.jpg").exists()
 
 
-def test_failed_upload_is_retried(tmp_path, immich, monkeypatch):
+def test_reimport_never_overwrites(tmp_path):
     bed, specs = make_bed(15)
-    f = tmp_path / "bed.png"
-    cv2.imwrite(str(f), bed)
+    write_png(tmp_path / "bed.png", bed)
     out = tmp_path / "photos"
-    main(["import", str(f), "--out", str(out), "--no-upload"])
-    state = State.load(out)
-    assert len(state.hashes) == len(specs) and not state.uploaded
-
-    main(["upload", "--out", str(out), "--immich-url", immich, "--api-key", "secret"])
-    assert len(State.load(out).uploaded) == len(specs)
-
-
-def test_bad_api_key_stops_early(tmp_path, immich):
-    with pytest.raises(SystemExit, match="Immich check failed"):
-        main(["upload", "--out", str(tmp_path), "--immich-url", immich, "--api-key", "nope"])
-
-
-def test_setup_then_commands_use_saved_settings(tmp_path, immich, monkeypatch):
-    from photopilot import config, scanner
-    monkeypatch.setattr(scanner, "list_devices", lambda: [("x", "EPSON Perfection V850")])
-    answers = iter([immich, "wrong-key",  # first try fails the check
-                    "", "secret",          # Enter keeps the URL, then the right key
-                    str(tmp_path / "keep")])
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-    main(["setup"])
-    cfg = config.load()
-    assert cfg == {"immich_url": immich, "api_key": "secret", "out_dir": str(tmp_path / "keep")}
-
-    bed, specs = make_bed(245)
-    cv2.imwrite(str(tmp_path / "bed.png"), bed)
-    main(["import", str(tmp_path / "bed.png")])  # no options: everything from the saved settings
-    assert len(list((tmp_path / "keep").glob("bed-*.jpg"))) == len(specs)
-    assert len(FakeImmich.assets) == len(specs)
+    main(["import", str(tmp_path / "bed.png"), "--out", str(out)])
+    main(["import", str(tmp_path / "bed.png"), "--out", str(out)])
+    assert len(list(out.glob("*.jpg"))) == 2 * len(specs)
 
 
 def test_folder_names_with_accents(tmp_path):
@@ -156,9 +56,51 @@ def test_folder_names_with_accents(tmp_path):
     bed, specs = make_bed(245)
     src = tmp_path / "Fotos Ölberg"
     src.mkdir()
-    ok, buf = cv2.imencode(".png", bed)
-    buf.tofile(str(src / "Scan été.png"))
+    write_png(src / "Scan été.png", bed)
     out = tmp_path / "Jürgen" / "Bilder"
-    main(["import", str(src), "--out", str(out), "--no-upload"])
+    main(["import", str(src), "--out", str(out)])
     assert len(list(out.glob("*.jpg"))) == len(specs)
-    assert len(list((out / "beds").glob("*-detected.jpg"))) == 1
+
+
+def test_scan_loop_saves_in_background(tmp_path, monkeypatch):
+    bed, specs = make_bed(245)
+    calls = []
+
+    def fake_scan(device, dpi, extra, keep_as=None):
+        calls.append(dpi)
+        time.sleep(0.05)
+        return bed.copy()
+
+    monkeypatch.setattr(scanner, "scan", fake_scan)
+    answers = iter(["", "d 1979-08", "", "q"])
+    monkeypatch.setattr(builtins, "input", lambda prompt="": next(answers))
+    out = tmp_path / "photos"
+    main(["scan", "--out", str(out)])
+
+    photos = sorted(out.glob("*.jpg"))
+    assert len(photos) == 2 * len(specs) and calls == [600, 600]
+    dates = {Image.open(p).getexif().get_ifd(0x8769)[0x9003] for p in photos}
+    assert "1979:08:01 12:00:00" in dates and len(dates) == 2  # 1st scan: scan time, 2nd: 1979
+
+
+def test_watch_handles_each_scan_once(tmp_path):
+    bed, specs = make_bed(245)
+    inbox = tmp_path / "Epson Scan"
+    inbox.mkdir()
+    write_png(inbox / "scan1.png", bed)
+    s = Settings(out_dir=tmp_path / "photos")
+    w = Watcher(inbox)
+    assert w.poll(s) == 0  # first sighting: wait until the file stops growing
+    assert w.poll(s) == len(specs)
+    assert w.poll(s) == 0
+    assert Watcher(inbox).poll(s) == 0  # remembered after a restart
+
+
+def test_setup_remembers_folder(tmp_path, monkeypatch):
+    target = tmp_path / "Immich import"
+    monkeypatch.setattr(builtins, "input", lambda prompt="": f'"{target}"')
+    main(["setup"])
+    bed, specs = make_bed(245)
+    write_png(tmp_path / "b.png", bed)
+    main(["import", str(tmp_path / "b.png")])  # no --out: uses the saved folder
+    assert len(list(target.glob("*.jpg"))) == len(specs)

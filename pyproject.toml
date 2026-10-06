@@ -5,14 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "photo-pilot"
 version = "0.1.0"
-description = "Scan a bed full of old photos, split them into individual pictures and upload them to Immich."
+description = "Scan a glass full of old photos and save each one as its own full-resolution file."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "opencv-python-headless>=4.5",
     "numpy",
     "pillow>=9",
-    "requests",
     "pywin32; sys_platform == 'win32'",
 ]
 

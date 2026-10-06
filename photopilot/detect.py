@@ -132,14 +132,15 @@ def find_photos(
     return photos
 
 
-def debug_overlay(scan: np.ndarray, photos: list[Photo]) -> np.ndarray:
-    """A copy of the scan with numbered outlines of what was detected."""
-    out = scan.copy()
-    t = max(2, max(scan.shape[:2]) // 400)
+def debug_overlay(scan: np.ndarray, photos: list[Photo], size: int = WORK_SIZE) -> np.ndarray:
+    """A small copy of the scan with numbered outlines of what was detected."""
+    h, w = scan.shape[:2]
+    scale = min(1.0, size / max(h, w))
+    out = cv2.resize(scan, (round(w * scale), round(h * scale)), interpolation=cv2.INTER_AREA)
     for i, p in enumerate(photos, 1):
-        pts = p.box.astype(np.int32)
-        cv2.polylines(out, [pts], True, (0, 0, 255), t)
+        pts = (p.box * scale).astype(np.int32)
+        cv2.polylines(out, [pts], True, (0, 0, 255), 3)
         x, y = pts.min(axis=0)
-        cv2.putText(out, str(i), (int(x) + 6 * t, int(y) + 20 * t), cv2.FONT_HERSHEY_SIMPLEX,
-                    t * 0.8, (0, 0, 255), t)
+        cv2.putText(out, str(i), (int(x) + 12, int(y) + 40), cv2.FONT_HERSHEY_SIMPLEX, 1.4,
+                    (0, 0, 255), 3)
     return out

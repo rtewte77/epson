@@ -20,7 +20,7 @@ cat > "$DESKTOP_FILE" <<DESK
 [Desktop Entry]
 Type=Application
 Name=Scan photos (photo-pilot)
-Comment=Scan old photos and send them to Immich
+Comment=Scan old photos into a folder, one file per photo
 Exec=$HOME/.local/bin/photo-pilot
 Icon=scanner
 Terminal=true

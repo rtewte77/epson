@@ -33,37 +33,45 @@ def list_devices() -> list[tuple[str, str]]:
     return _wia_list() if IS_WINDOWS else _sane_list()
 
 
-def scan(path: Path, device: str | None = None, dpi: int = 600,
-         extra_args: list[str] | None = None) -> np.ndarray:
-    """Scan the whole glass in colour, save it to `path` and return it as BGR."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+def scan(device: str | None = None, dpi: int = 600, extra_args: list[str] | None = None,
+         keep_as: Path | None = None) -> np.ndarray:
+    """Scan the whole glass in colour and return it as BGR (optionally also saved to `keep_as`)."""
     if IS_WINDOWS:
-        _wia_scan(path, device, dpi)
+        from . import config
+        tmp = config.app_dir() / "last-scan.bmp"
+        tmp.parent.mkdir(parents=True, exist_ok=True)
+        _wia_scan(tmp, device, dpi)
+        data = np.fromfile(str(tmp), dtype=np.uint8)
+        tmp.unlink(missing_ok=True)
     else:
-        _sane_scan(path, device, dpi, extra_args or [])
-    img = load_image(path)
+        data = np.frombuffer(_sane_scan(device, dpi, extra_args or []), dtype=np.uint8)
+    if keep_as:
+        keep_as.parent.mkdir(parents=True, exist_ok=True)
+        data.tofile(str(keep_as))
+    img = decode_image(data)
     if img is None:
-        raise ScannerError(f"scanner produced an unreadable file: {path}")
+        raise ScannerError("the scanner sent an image that can't be read")
     return img
 
 
-def scan_suffix() -> str:
+def raw_suffix() -> str:
     return ".bmp" if IS_WINDOWS else ".tif"
+
+
+def decode_image(data: np.ndarray) -> np.ndarray | None:
+    img = cv2.imdecode(data, cv2.IMREAD_COLOR | cv2.IMREAD_ANYDEPTH)
+    if img is not None and img.dtype == np.uint16:
+        img = (img / 257).astype(np.uint8)
+    return img
 
 
 def load_image(path: Path) -> np.ndarray | None:
     """Read any image (incl. 16-bit TIFFs from Epson Scan) as 8-bit BGR."""
-    # imdecode instead of imread: imread can't open non-ASCII paths on Windows.
+    # fromfile + imdecode: cv2.imread can't open non-ASCII paths on Windows.
     try:
-        data = np.fromfile(str(path), dtype=np.uint8)
+        return decode_image(np.fromfile(str(path), dtype=np.uint8))
     except OSError:
         return None
-    img = cv2.imdecode(data, cv2.IMREAD_COLOR | cv2.IMREAD_ANYDEPTH)
-    if img is None:
-        return None
-    if img.dtype == np.uint16:
-        img = (img / 257).astype(np.uint8)
-    return img
 
 
 # --- SANE (Linux / macOS) -------------------------------------------------
@@ -85,16 +93,16 @@ def _sane_list() -> list[tuple[str, str]]:
     return [tuple(line.strip().split("|", 1)) for line in out.stdout.splitlines() if "|" in line]
 
 
-def _sane_scan(path: Path, device: str | None, dpi: int, extra: list[str]) -> None:
+def _sane_scan(device: str | None, dpi: int, extra: list[str]) -> bytes:
+    """Scan straight into memory (no temporary file)."""
     cmd = [_scanimage(), "--mode", "Color", "--resolution", str(dpi), "--format", "tiff"]
     if device:
         cmd += ["-d", device]
     cmd += extra
-    with open(path, "wb") as f:
-        proc = subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE, timeout=900)
-    if proc.returncode != 0:
-        path.unlink(missing_ok=True)
+    proc = subprocess.run(cmd, capture_output=True, timeout=900)
+    if proc.returncode != 0 or not proc.stdout:
         raise ScannerError(proc.stderr.decode(errors="replace").strip() or "scanimage failed")
+    return proc.stdout
 
 
 # --- WIA (Windows) ---------------------------------------------------------
