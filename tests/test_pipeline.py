@@ -125,3 +125,21 @@ def test_failed_upload_is_retried(tmp_path, immich, monkeypatch):
 def test_bad_api_key_stops_early(tmp_path, immich):
     with pytest.raises(SystemExit, match="Immich check failed"):
         main(["upload", "--out", str(tmp_path), "--immich-url", immich, "--api-key", "nope"])
+
+
+def test_setup_then_commands_use_saved_settings(tmp_path, immich, monkeypatch):
+    from photopilot import config, scanner
+    monkeypatch.setattr(scanner, "list_devices", lambda: [("x", "EPSON Perfection V850")])
+    answers = iter([immich, "wrong-key",  # first try fails the check
+                    "", "secret",          # Enter keeps the URL, then the right key
+                    str(tmp_path / "keep")])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    main(["setup"])
+    cfg = config.load()
+    assert cfg == {"immich_url": immich, "api_key": "secret", "out_dir": str(tmp_path / "keep")}
+
+    bed, specs = make_bed(245)
+    cv2.imwrite(str(tmp_path / "bed.png"), bed)
+    main(["import", str(tmp_path / "bed.png")])  # no options: everything from the saved settings
+    assert len(list((tmp_path / "keep").glob("bed-*.jpg"))) == len(specs)
+    assert len(FakeImmich.assets) == len(specs)

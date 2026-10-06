@@ -24,41 +24,51 @@ brands also work if Windows (WIA) or Linux (SANE) can see them.
 
 Prints only: scanning goes through the glass (flatbed), not the film/slide holder.
 
-## Windows
+## Download: two programs
+
+| System | File |
+|---|---|
+| Windows 10 / 11 | `photo-pilot-windows.exe` |
+| Linux Mint 21+ (or Ubuntu 22.04+) | `photo-pilot-linux` + `linux/install-linux-mint.sh` |
+
+Get them from this repository's **Releases** page, or from the **Actions** tab: open the
+latest "Build programs" run and download them under *Artifacts*. They are built automatically
+on every push, and a tag like `v0.1.0` publishes them as a release. Neither needs Python.
+
+On the first start, the program asks for the Immich address and API key (see
+[Immich API key](#immich-api-key)) and the folder where photos are also kept on the computer.
+It tests the connection and remembers everything. After that it goes straight to scanning.
+
+### Windows
 
 1. Install the scanner driver for your model from Epson's support site. Look for
    **Epson Scan** or **Epson Scan 2**: it also installs the Windows (WIA) driver photo-pilot uses.
-2. Install Python 3 from <https://www.python.org/downloads/>, with **"Add python.exe to PATH"** ticked.
-3. Download this project and double-click **`windows\install.bat`**. At the end it should list
-   your scanner.
-4. Open **`windows\Scan photos.bat`** in Notepad and fill in your Immich address and API key
-   (see [Immich API key](#immich-api-key)).
-5. Double-click **`Scan photos.bat`** whenever you want to scan.
+2. Double-click **`photo-pilot-windows.exe`**. Windows SmartScreen may warn about an unknown
+   program: choose *More info → Run anyway*.
+3. Close Epson Scan while photo-pilot runs: only one program can use the scanner at a time.
 
-If the direct scan doesn't work with your model or driver, use Epson's own software instead:
-scan the **whole glass** with auto-crop off into `Pictures\Epson Scan`, and keep
-**`Watch Epson Scan folder.bat`** running. It handles each new file as soon as it appears.
+If photo-pilot can't reach the scanner directly, it offers a fallback. Scan with Epson Scan
+(whole glass, auto-crop **off**, 600 dpi, TIFF or JPEG) into `Pictures\Epson Scan`, and
+photo-pilot handles each new file as soon as it appears.
 
-## Linux Mint
+### Linux Mint
 
-```sh
-git clone <this repo> && cd epson
-./linux/install-linux-mint.sh     # installs SANE + photo-pilot, then lists scanners
-```
+1. Put `photo-pilot-linux` and `install-linux-mint.sh` in the same folder. Run
+   `sh install-linux-mint.sh`, which installs SANE and adds a **"Scan photos"** menu entry
+   and desktop icon. Log out and back in once.
+2. If `scanimage -L` doesn't list the scanner, install Epson's Linux driver. On Epson's
+   support site, choose your model and **Linux** as the operating system:
+   * **V850, V800, V600, V550, V370 and newer**: *Epson Scan 2* (`epsonscan2` `.deb` bundle,
+     plus the non-free plugin if your model needs it). Run its `install.sh`.
+   * **Older models (V700, V750, 4990, 4490, …)**: often work out of the box through SANE's
+     `epson2` backend. Otherwise install *Image Scan! for Linux* (`iscan`) and its plugin for your model.
+3. Start **Scan photos** from the menu.
 
-Log out and back in once. If `photo-pilot devices` lists nothing, install Epson's Linux driver.
-On Epson's support site, choose your model and **Linux** as the operating system:
-
-* **V850, V800, V600, V550, V370 and newer**: *Epson Scan 2* (`epsonscan2` `.deb` bundle,
-  plus the non-free plugin if your model needs it). Run its `install.sh`.
-* **Older models (V700, V750, 4990, 4490, …)**: often work out of the box through SANE's
-  `epson2` backend. Otherwise install *Image Scan! for Linux* (`iscan`) and its plugin for your model.
-
-Check with `scanimage -L`, then run:
+### From source (any OS)
 
 ```sh
-export IMMICH_URL=http://192.168.1.10:2283
-export IMMICH_API_KEY=your-key
+pip install .            # Python 3.9+; on Windows this also installs pywin32
+photo-pilot setup        # Immich address + key, once
 photo-pilot scan
 ```
 
@@ -99,7 +109,11 @@ Tips for good results:
 
 ### Other commands
 
+These are for the command line. With the downloaded programs, use `photo-pilot-windows.exe <command>`
+or `photo-pilot <command>`.
+
 ```sh
+photo-pilot setup                         # change the Immich address / key / photo folder
 photo-pilot devices                       # which scanners are visible
 photo-pilot import scans/                 # split existing full-glass scans (files or a folder)
 photo-pilot watch "~/Pictures/Epson Scan" # process each new scan Epson's software saves there
@@ -107,7 +121,7 @@ photo-pilot upload                        # retry anything not uploaded yet
 photo-pilot scan --no-upload              # only save JPEGs locally
 ```
 
-All commands accept `--out DIR` (default `./photos`), `--album`, `--date`, `--no-upload`,
+All commands accept `--out DIR` (default: the folder chosen in setup, else `Pictures/Scanned photos`), `--album`, `--date`, `--no-upload`,
 `--sensitivity` and `--min-area`. Run `photo-pilot <command> --help` for every option.
 
 ## Immich API key
@@ -140,6 +154,7 @@ work on them as well ("beach", "birthday cake", a person's name).
 ```sh
 pip install -e '.[test]'
 pytest
+pyinstaller --onefile --console --name photo-pilot --paths . packaging/launcher.py   # build a program
 ```
 
 The tests build synthetic scans (white and black lid, photos with and without white borders,
