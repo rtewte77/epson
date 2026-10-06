@@ -6,6 +6,8 @@ and uploads it to **Immich**, optionally with the date it was taken and an album
 
 Runs on **Windows** and **Linux Mint** (and other Linux distributions or macOS).
 
+![What it looks like: the program window, the scan with detected photos, and the cut-out photos](docs/how-it-looks.png)
+
 ```
  ┌──────── scanner glass ────────┐          Immich
  │  ┌────┐   ┌──────┐            │     ┌──────────────┐
