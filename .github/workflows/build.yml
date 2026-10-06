@@ -16,7 +16,10 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -53,6 +56,14 @@ jobs:
       - name: Smoke test
         shell: bash
         run: ./dist/${{ matrix.file }} --help
+      - name: Scanner layer is packaged (no scanner attached on CI)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          out=$(./dist/${{ matrix.file }} devices 2>&1 || true)
+          echo "$out"
+          # WIA may be missing on Windows Server, but pywin32 must be inside the .exe.
+          if echo "$out" | grep -q "pywin32"; then exit 1; fi
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}

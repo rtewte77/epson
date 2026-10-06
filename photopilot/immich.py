@@ -3,6 +3,9 @@
 Create an API key in Immich under Account Settings -> API Keys. It needs at
 least the asset.upload, album.read, album.create and albumAsset.create
 permissions (or just "all").
+
+Uploads use the Immich v3 form fields; older servers that still require
+deviceAssetId/deviceId are detected on the first upload and handled.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ class Immich:
         self.session.headers.update({"x-api-key": api_key, "Accept": "application/json"})
         self.timeout = timeout
         self._album_ids: dict[str, str] = {}
+        self._legacy_upload = False  # Immich before v3 wants deviceAssetId/deviceId
 
     def _req(self, method: str, path: str, **kw) -> requests.Response:
         try:
@@ -41,23 +45,30 @@ class Immich:
 
     def check(self) -> None:
         """Fail early with a clear message if the URL or API key is wrong."""
-        self._req("GET", "/server/ping")
-        self._req("GET", "/users/me")
+        self._req("GET", "/server/ping")  # is this Immich at all?
+        self._req("GET", "/albums")  # is the key valid? (uses a permission we need anyway)
 
     def upload(self, path: Path, taken: datetime) -> tuple[str, bool]:
         """Upload one file. Returns (asset id, was_duplicate)."""
         data = path.read_bytes()
         stamp = taken.isoformat()
-        fields = {
-            "deviceAssetId": f"{path.name}-{len(data)}",
-            "deviceId": DEVICE_ID,
-            "fileCreatedAt": stamp,
-            "fileModifiedAt": stamp,
-        }
+        fields = {"fileCreatedAt": stamp, "fileModifiedAt": stamp, "filename": path.name}
         # Lets Immich spot a file it already has without receiving it again.
         headers = {"x-immich-checksum": hashlib.sha1(data).hexdigest()}
-        r = self._req("POST", "/assets", data=fields, headers=headers,
-                      files={"assetData": (path.name, data, "image/jpeg")})
+
+        def send():
+            extra = ({"deviceAssetId": f"{path.name}-{len(data)}", "deviceId": DEVICE_ID}
+                     if self._legacy_upload else {})
+            return self._req("POST", "/assets", data={**fields, **extra}, headers=headers,
+                             files={"assetData": (path.name, data, "image/jpeg")})
+
+        try:
+            r = send()
+        except ImmichError as e:
+            if self._legacy_upload or "HTTP 400" not in str(e) or "device" not in str(e):
+                raise
+            self._legacy_upload = True  # older server: retry the way it expects
+            r = send()
         body = r.json()
         return body["id"], body.get("status") == "duplicate"
 

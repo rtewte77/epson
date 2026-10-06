@@ -16,6 +16,7 @@ from .test_detect import make_bed
 class FakeImmich(BaseHTTPRequestHandler):
     assets: list = []
     albums: dict = {}
+    version = 3  # 3: current API (strict, no device fields); 1: old API (device fields required)
 
     def log_message(self, *a):
         pass
@@ -41,7 +42,12 @@ class FakeImmich(BaseHTTPRequestHandler):
     def do_POST(self):
         body = self._body()
         if self.path == "/api/assets":
-            assert b'name="deviceAssetId"' in body and b'name="fileCreatedAt"' in body
+            assert b'name="fileCreatedAt"' in body and b'name="assetData"' in body
+            has_device = b'name="deviceAssetId"' in body
+            if self.version >= 3 and has_device:
+                return self._send(400, {"message": ["property deviceAssetId should not exist"]})
+            if self.version < 3 and not has_device:
+                return self._send(400, {"message": ["deviceAssetId should not be empty"]})
             checksum = self.headers["x-immich-checksum"]
             for a in self.assets:
                 if a == checksum:
@@ -60,9 +66,9 @@ class FakeImmich(BaseHTTPRequestHandler):
         self._send(200, [])
 
 
-@pytest.fixture
-def immich():
-    FakeImmich.assets, FakeImmich.albums = [], {}
+@pytest.fixture(params=[3, 1], ids=["immich-v3", "immich-v1"])
+def immich(request):
+    FakeImmich.assets, FakeImmich.albums, FakeImmich.version = [], {}, request.param
     srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeImmich)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{srv.server_port}"
@@ -143,3 +149,16 @@ def test_setup_then_commands_use_saved_settings(tmp_path, immich, monkeypatch):
     main(["import", str(tmp_path / "bed.png")])  # no options: everything from the saved settings
     assert len(list((tmp_path / "keep").glob("bed-*.jpg"))) == len(specs)
     assert len(FakeImmich.assets) == len(specs)
+
+
+def test_folder_names_with_accents(tmp_path):
+    """e.g. C:\\Users\\Jürgen\\Pictures\\Fotos Ölberg - must work on Windows too."""
+    bed, specs = make_bed(245)
+    src = tmp_path / "Fotos Ölberg"
+    src.mkdir()
+    ok, buf = cv2.imencode(".png", bed)
+    buf.tofile(str(src / "Scan été.png"))
+    out = tmp_path / "Jürgen" / "Bilder"
+    main(["import", str(src), "--out", str(out), "--no-upload"])
+    assert len(list(out.glob("*.jpg"))) == len(specs)
+    assert len(list((out / "beds").glob("*-detected.jpg"))) == 1
