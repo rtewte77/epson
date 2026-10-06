@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "photo-pilot"
+version = "0.1.0"
+description = "Scan a bed full of old photos, split them into individual pictures and upload them to Immich."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "opencv-python-headless>=4.5",
+    "numpy",
+    "pillow>=9",
+    "requests",
+    "pywin32; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+photo-pilot = "photopilot.cli:main"
+
+[tool.setuptools]
+packages = ["photopilot"]
