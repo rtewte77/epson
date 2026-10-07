@@ -21,7 +21,7 @@ cat > "$DESKTOP_FILE" <<DESK
 Type=Application
 Name=Scan photos (photo-pilot)
 Comment=Scan old photos into a folder, one file per photo
-Exec=$HOME/.local/bin/photo-pilot
+Exec=$HOME/.local/bin/photo-pilot %F
 Icon=scanner
 Terminal=true
 Categories=Graphics;Scanning;

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import threading
 import time
@@ -126,16 +127,51 @@ def cmd_scan(args) -> None:
     print(f"\nDone: {total} photo(s) saved in {s.out_dir}")
 
 
-def bed_files(paths: list[str]) -> list[Path]:
+def bed_files(paths: list[str], skip_dir: Path | None = None) -> list[Path]:
+    """All scan images in the given files/folders (subfolders included)."""
+    skip = skip_dir.resolve() if skip_dir else None
     files = []
     for p in map(Path, paths):
         if p.is_dir():
-            files += sorted(f for f in p.iterdir() if f.suffix.lower() in IMAGE_EXTS)
+            files += sorted(f for f in p.rglob("*") if f.suffix.lower() in IMAGE_EXTS
+                            and not f.name.startswith("."))
         elif p.exists():
             files.append(p)
         else:
             print(f"skipping {p}: not found")
-    return files
+    # Never re-process our own output (e.g. when the photo folder sits inside the scan
+    # folder) or our previews.
+    own = [d for d in (skip, config.app_dir().resolve()) if d]
+    return [f for f in files if not any(d in f.resolve().parents for d in own)]
+
+
+class Done:
+    """Which scan files were already cut up (survives restarts). A file that is
+    replaced by a new scan with the same name counts as new."""
+
+    def __init__(self):
+        self.path = config.app_dir() / "processed.json"
+        try:
+            self.keys = set(json.loads(self.path.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            self.keys = set()
+        self.lock = threading.Lock()
+
+    @staticmethod
+    def key(f: Path) -> str:
+        st = f.stat()
+        return f"{f.resolve()}|{st.st_size}|{st.st_mtime_ns}"
+
+    def __contains__(self, f: Path) -> bool:
+        return self.key(f) in self.keys
+
+    def add(self, f: Path) -> None:
+        with self.lock:
+            self.keys.add(self.key(f))
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(sorted(self.keys)), encoding="utf-8")
+            os.replace(tmp, self.path)
 
 
 def import_one(path: Path, s: Settings) -> int:
@@ -144,43 +180,79 @@ def import_one(path: Path, s: Settings) -> int:
         print(f"{path.name}: cannot read image, skipped")
         return 0
     n = len(process_bed(img, path.stem, s))
-    print(summary(n, path.name))
+    print(summary(n, path.name), flush=True)
     return n
 
 
+def run_batch(paths: list[str], s: Settings, again: bool = False, workers: int = 0) -> int:
+    """Cut up every scan in the given files/folders, several at a time."""
+    done = Done()
+    files = bed_files(paths, skip_dir=s.out_dir)
+    todo = files if again else [f for f in files if f not in done]
+    if len(todo) < len(files):
+        print(f"{len(files) - len(todo)} scan(s) already done earlier, skipped")
+    if not todo:
+        print("Nothing new to do.")
+        return 0
+    # OpenCV and JPEG encoding release the GIL, so threads really run in parallel.
+    # Few workers: each full-glass scan needs 100-450 MB of memory.
+    workers = workers or max(1, min(3, (os.cpu_count() or 2) - 1))
+    print(f"Cutting up {len(todo)} scan(s) ({workers} at a time)...")
+    t0 = time.time()
+    total = failed = 0
+    progress = iter(range(1, len(todo) + 1))
+    lock = threading.Lock()
+
+    def work(f: Path) -> int:
+        try:
+            img = scanner.load_image(f)
+            if img is None:
+                raise ValueError("cannot read image")
+            n = len(process_bed(img, f.stem, s))
+            done.add(f)
+            msg, ok = summary(n, f.name), True
+        except Exception as e:
+            n, msg, ok = 0, f"{f.name}: FAILED ({e})", False
+        with lock:
+            print(f"[{next(progress)}/{len(todo)}] {msg}", flush=True)
+        return n if ok else -1
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for n in pool.map(work, todo):
+            if n < 0:
+                failed += 1
+            else:
+                total += n
+    mins = (time.time() - t0) / 60
+    print(f"\nDone: {total} photo(s) from {len(todo) - failed} scan(s) in {mins:.1f} min, "
+          f"saved in {s.out_dir}" + (f". {failed} scan(s) failed, see above." if failed else ""))
+    return total
+
+
 def cmd_import(args) -> None:
-    s = make_settings(args)
-    total = sum(import_one(p, s) for p in bed_files(args.paths))
-    print(f"Done: {total} photo(s) saved.")
+    run_batch(args.paths, make_settings(args), again=args.again, workers=args.workers)
 
 
 class Watcher:
-    """Remembers which scans in a folder were already handled (survives restarts)."""
+    """Cuts up each new scan that appears in a folder, once."""
 
     def __init__(self, folder: Path):
         self.folder = folder
-        self.state = config.app_dir() / "watched.json"
-        try:
-            self.done = set(json.loads(self.state.read_text(encoding="utf-8")))
-        except (OSError, ValueError):
-            self.done = set()
+        self.done = Done()
         self.sizes: dict[Path, int] = {}
 
     def poll(self, s: Settings) -> int:
         """Handle every finished new scan once. Returns photos saved."""
         n = 0
-        for f in bed_files([str(self.folder)]):
-            key = str(f.resolve())
-            if key in self.done:
+        for f in bed_files([str(self.folder)], skip_dir=s.out_dir):
+            if f in self.done:
                 continue
             size = f.stat().st_size
             # Only once the scanning software has finished writing it.
             if size > 0 and self.sizes.get(f) == size:
                 n += import_one(f, s)
-                self.done.add(key)
+                self.done.add(f)
                 self.sizes.pop(f, None)
-                self.state.parent.mkdir(parents=True, exist_ok=True)
-                self.state.write_text(json.dumps(sorted(self.done)), encoding="utf-8")
             else:
                 self.sizes[f] = size
         return n
@@ -253,9 +325,30 @@ def double_clicked() -> None:
             pass
 
 
+def dropped(paths: list[str]) -> None:
+    """Folders/files dragged onto the program icon: cut them all up."""
+    try:
+        cfg = config.load()
+        s = Settings(out_dir=Path(cfg.get("out_dir") or config.default_out_dir()))
+        print(f"Photos go to: {s.out_dir}")
+        run_batch(paths, s)
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        try:
+            input("\nPress Enter to close this window.")
+        except (EOFError, KeyboardInterrupt):
+            pass
+
+
+COMMANDS = {"scan", "import", "watch", "setup", "devices", "-h", "--help"}
+
+
 def main(argv: list[str] | None = None) -> None:
     if argv is None and len(sys.argv) == 1:
         return double_clicked()
+    if argv is None and sys.argv[1] not in COMMANDS and all(Path(a).exists() for a in sys.argv[1:]):
+        return dropped(sys.argv[1:])
     p = argparse.ArgumentParser(prog="photo-pilot", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
@@ -282,8 +375,11 @@ def main(argv: list[str] | None = None) -> None:
     sp.add_argument("--scanimage-args", help="Linux/macOS: extra options passed to scanimage, quoted")
     sp.set_defaults(func=cmd_scan)
 
-    ip = sub.add_parser("import", parents=[common], help="cut up existing full-glass scans (files or folders)")
+    ip = sub.add_parser("import", parents=[common],
+                        help="cut up a batch of full-glass scans (files or folders, subfolders included)")
     ip.add_argument("paths", nargs="+")
+    ip.add_argument("--again", action="store_true", help="also redo scans that were done before")
+    ip.add_argument("--workers", type=int, default=0, help="scans processed at the same time (default: auto)")
     ip.set_defaults(func=cmd_import)
 
     wp = sub.add_parser("watch", parents=[common],

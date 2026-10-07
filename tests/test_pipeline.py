@@ -42,13 +42,49 @@ def test_import_saves_full_resolution_photos(tmp_path):
     assert (config.preview_dir() / "bed1.jpg").exists()
 
 
-def test_reimport_never_overwrites(tmp_path):
+def test_batch_rerun_only_does_new_scans(tmp_path):
     bed, specs = make_bed(15)
-    write_png(tmp_path / "bed.png", bed)
+    scans = tmp_path / "scans"
+    (scans / "box 2").mkdir(parents=True)
+    write_png(scans / "a.png", bed)
+    write_png(scans / "box 2" / "b.png", bed)  # subfolders are included
     out = tmp_path / "photos"
-    main(["import", str(tmp_path / "bed.png"), "--out", str(out)])
-    main(["import", str(tmp_path / "bed.png"), "--out", str(out)])
+    main(["import", str(scans), "--out", str(out)])
     assert len(list(out.glob("*.jpg"))) == 2 * len(specs)
+
+    main(["import", str(scans), "--out", str(out)])  # nothing new: nothing done
+    assert len(list(out.glob("*.jpg"))) == 2 * len(specs)
+
+    write_png(scans / "c.png", bed)  # a new scan: only that one
+    main(["import", str(scans), "--out", str(out)])
+    assert len(list(out.glob("*.jpg"))) == 3 * len(specs)
+
+    main(["import", str(scans), "--out", str(out), "--again"])  # redo all, never overwrite
+    assert len(list(out.glob("*.jpg"))) == 6 * len(specs)
+
+
+def test_batch_skips_its_own_output_and_survives_bad_files(tmp_path, capsys):
+    bed, specs = make_bed(245)
+    scans = tmp_path / "Pictures"
+    scans.mkdir()
+    write_png(scans / "glass.png", bed)
+    (scans / "broken.jpg").write_bytes(b"not an image")
+    out = scans / "Scanned photos"  # output folder inside the scan folder
+    main(["import", str(scans), "--out", str(out)])
+    main(["import", str(scans), "--out", str(out)])
+    assert len(list(out.glob("*.jpg"))) == len(specs)  # cut-outs were not cut up again
+    assert "broken.jpg: FAILED" in capsys.readouterr().out
+
+
+def test_drag_and_drop_folder(tmp_path, monkeypatch):
+    bed, specs = make_bed(245)
+    write_png(tmp_path / "scan.png", bed)
+    out = tmp_path / "photos"
+    config.save({"out_dir": str(out)})
+    monkeypatch.setattr("sys.argv", ["photo-pilot-windows.exe", str(tmp_path)])
+    monkeypatch.setattr(builtins, "input", lambda prompt="": "")
+    main()
+    assert len(list(out.glob("*.jpg"))) == len(specs)
 
 
 def test_folder_names_with_accents(tmp_path):

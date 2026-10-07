@@ -47,9 +47,49 @@ on every push, and a tag like `v0.1.0` publishes them as a release. Neither need
      `epson2` backend. Otherwise install *Image Scan! for Linux* (`iscan`) and its plugin for your model.
 3. Start **Scan photos** from the menu.
 
-## Using it
+## Using it: scan in bulk, then cut up in one go (recommended)
 
-Double-click the program. No questions are asked: it goes straight to scanning.
+This is the most reliable way: scanning goes through **Epson's own software**, which is guaranteed
+to work with the scanner, and photo-pilot only does the cutting.
+
+**1. Scan everything with Epson Scan / Epson Scan 2.** Set it up once:
+
+| Setting | Value |
+|---|---|
+| Mode | Professional Mode (Epson Scan) / Photo or Document mode with the whole glass (Epson Scan 2) |
+| Document type / source | Reflective, Document Table (the glass) |
+| Image type | 24-bit Color |
+| Resolution | 600 dpi (1200 for small prints) |
+| Scan area | **The whole glass**. Turn **off** thumbnail view, auto-crop and auto-exposure-per-photo |
+| Save as | JPEG (highest quality), or TIFF if disk space doesn't matter |
+| Folder | e.g. `Pictures\Epson Scan`; subfolders like `Box 1`, `Box 2` are fine |
+
+Put photos face down about **1 cm apart**, scan, swap, scan, ... Each scan is one file
+containing several photos. Do as many as you like.
+
+**2. Cut them all up.** **Drag the scan folder onto `photo-pilot-windows.exe`** (Linux: onto the
+"Scan photos" desktop icon, or run `photo-pilot import <folder>`). It processes every scan,
+several at a time:
+
+```
+Photos go to: C:\Users\Dad\Pictures\Scanned photos
+Cutting up 340 scan(s) (3 at a time)...
+[1/340] img0001.jpg: 4 photos saved
+[2/340] img0002.jpg: 5 photos saved
+...
+Done: 1512 photo(s) from 340 scan(s) in 3.1 min
+```
+
+Measured here: about half a second per full-glass scan, so 1,000 scans take under 10 minutes.
+
+**Doing it in batches is safe.** Scans that were already cut up are remembered and skipped, so
+after a new scanning session, just drag the same folder again and only the new scans are
+processed. A scan file that can't be read is reported and the rest continue. The photo folder is
+never cut up again, even if it sits inside the scan folder.
+
+## Or: scan directly from photo-pilot
+
+Double-click the program. It talks to the scanner itself, with no Epson software window.
 
 1. Put photos face down on the glass, about **1 cm apart**, and close the lid.
 2. Press **Enter**.
@@ -57,34 +97,39 @@ Double-click the program. No questions are asked: it goes straight to scanning.
    in the background while you do that.
 4. Type **`q`** when you're done.
 
+This uses the Windows/Linux scanner interface (WIA/SANE) rather than Epson's app, and has not
+been tried on a real Epson yet. If it can't reach the scanner, it offers to watch the Epson Scan
+folder instead and cut up each new scan as soon as it appears.
+
 Optional: type `d 1979-08` before scanning a batch to stamp those photos with the date they were
 taken. The date goes into the photo's EXIF data, so Immich shows them in the right year.
-Without it, the scan time is used.
+Without it, the scan time is used. For bulk processing: `photo-pilot import <folder> --date 1979`.
 
-**Where the photos go:** `Pictures\Scanned photos` (Windows) or `~/Pictures/Scanned photos`
-(Linux). To use another folder, for example one that Immich imports from, run
-`photo-pilot-windows.exe setup` once (Linux: `photo-pilot setup`) and type the folder.
+## Where the photos go
 
-**What lands in the folder:** only the photos, named like `20261006-153012-01.jpg`. They are
-at full scan resolution, JPEG quality 95, without colour subsampling. Each file appears only
-once it's completely written, so a folder watcher never picks up half a photo. Nothing is ever
-overwritten. Duplicates are not checked: Immich can find those later.
+`Pictures\Scanned photos` (Windows) or `~/Pictures/Scanned photos` (Linux). To use another
+folder, for example one that Immich imports from, run `photo-pilot-windows.exe setup` once
+(Linux: `photo-pilot setup`) and type the folder.
+
+**What lands in the folder:** only the photos, named after their scan, like `img0001-01.jpg`,
+`img0001-02.jpg`. They are at full scan resolution, JPEG quality 95, without colour subsampling.
+Each file appears only once it's completely written, so a folder watcher never picks up half a
+photo. Nothing is ever overwritten. Duplicates are not checked: Immich can find those later.
 
 **Getting it into Immich:** add the folder as an **External Library** in Immich
 (Administration → External Libraries), or upload it with the Immich app or CLI. Any folder
 sync to the Immich machine works too.
 
-### Resolution
+## Resolution
 
 The default is **600 dpi**. A 10×15 cm (4×6") print becomes about 2400×3600 px (8.6 MP), which
 is all the detail a typical print holds. For small prints you may want to enlarge, use
 **1200 dpi**: run `photo-pilot-windows.exe scan --dpi 1200`. Scanning takes about 4× longer and
 the files are about 4× bigger.
 
-Measured: cutting up and saving a full glass takes under 1.5 s even at 1200 dpi, so the
-scanner itself is the only wait.
+Measured: cutting up and saving a full glass takes under 1.5 s even at 1200 dpi.
 
-### Tips
+## Tips
 
 * Photos that **touch** are cut out as one. Leave a gap.
 * Photos with **white borders on the white lid** are the hardest case. A sheet of **black paper**
@@ -94,17 +139,12 @@ scanner itself is the only wait.
   (Linux). The latest 30 are kept.
 * Place photos upright where you can. Turning one sideways in Immich takes one click.
 
-### If direct scanning doesn't work
-
-If the program can't reach the scanner, it offers a fallback. Scan with Epson's own software
-(whole glass, auto-crop **off**, TIFF or JPEG) into `Pictures/Epson Scan`, and photo-pilot cuts
-up each new file as soon as it appears.
-
-### Command line
+## Command line
 
 ```sh
 photo-pilot scan [--dpi 1200] [--out FOLDER] [--date 1979-08] [--keep-raw]
-photo-pilot import scans/          # cut up existing full-glass scans (files or a folder)
+photo-pilot import scans/          # cut up a batch of scans (folders include subfolders)
+photo-pilot import scans/ --again  # also redo scans that were done before
 photo-pilot watch "Epson Scan"     # cut up each new scan that appears in a folder
 photo-pilot setup                  # choose the photo folder
 photo-pilot devices                # which scanners are visible
