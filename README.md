@@ -8,6 +8,23 @@ Runs on **Windows** and **Linux Mint** (and other Linux distributions or macOS).
 
 ![The program, the photos it found on the glass, and the files it saved](docs/how-it-looks.png)
 
+## Epson Perfection V850 Pro: what to know
+
+* **Linux Mint:** supported out of the box. SANE's own device list rates the V850 Pro
+  (USB id `04b8:0151`, also sold as GT-X980) **"good"** with the `epson2` driver that ships with
+  Mint. No Epson download is needed: run the installer below and `scanimage -L` should show it.
+* **Windows:** install **Epson Scan** for the V850 Pro from Epson's support site. For bulk
+  scanning use its **Professional Mode**.
+* **For prints, the white reflective document mat must be in the lid.** The V850's lid is also
+  its film light source, and the mat is what gives photo-pilot the even white background it
+  looks for. Leave the film holders out.
+* Epson Scan's own **Thumbnail** preview can also find several photos on the glass, but you
+  have to preview and tick each photo for every glass. photo-pilot does that part for whole
+  folders at once, so in Epson Scan use **Normal** preview and the **whole glass**.
+* The glass is 21.6 × 29.7 cm (8.5 × 11.7"). With 1 cm gaps that fits three 10×15 cm (4×6")
+  prints, four 9×13 cm (3.5×5") prints, or two 13×18 cm (5×7") prints per scan. Small
+  square or wallet prints fit many more.
+
 ## Supported scanners
 
 Any Epson Perfection flatbed that has an Epson driver for your system, for example
@@ -39,8 +56,9 @@ on every push, and a tag like `v0.1.0` publishes them as a release. Neither need
 1. Put `photo-pilot-linux` and `install-linux-mint.sh` in the same folder. Run
    `sh install-linux-mint.sh`, which installs SANE and adds a **"Scan photos"** menu entry
    and desktop icon. Log out and back in once.
-2. If `scanimage -L` doesn't list the scanner, install Epson's Linux driver. On Epson's
-   support site, choose your model and **Linux** as the operating system:
+2. The **V850 Pro** needs nothing more: it is supported by SANE's built-in `epson2` driver.
+   For other models, if `scanimage -L` doesn't list the scanner, install Epson's Linux driver.
+   On Epson's support site, choose your model and **Linux** as the operating system:
    * **V850, V800, V600, V550, V370 and newer**: *Epson Scan 2* (`epsonscan2` `.deb` bundle,
      plus the non-free plugin if your model needs it). Run its `install.sh`.
    * **Older models (V700, V750, 4990, 4490, …)**: often work out of the box through SANE's
@@ -52,15 +70,16 @@ on every push, and a tag like `v0.1.0` publishes them as a release. Neither need
 This is the most reliable way: scanning goes through **Epson's own software**, which is guaranteed
 to work with the scanner, and photo-pilot only does the cutting.
 
-**1. Scan everything with Epson Scan / Epson Scan 2.** Set it up once:
+**1. Scan everything with Epson Scan.** Set it up once (exact labels may differ slightly
+between Epson Scan versions):
 
 | Setting | Value |
 |---|---|
-| Mode | Professional Mode (Epson Scan) / Photo or Document mode with the whole glass (Epson Scan 2) |
+| Mode | Professional Mode |
 | Document type / source | Reflective, Document Table (the glass) |
 | Image type | 24-bit Color |
 | Resolution | 600 dpi (1200 for small prints) |
-| Scan area | **The whole glass**. Turn **off** thumbnail view, auto-crop and auto-exposure-per-photo |
+| Scan area | **The whole glass**: Normal preview (not Thumbnail), marquee over the whole glass |
 | Save as | JPEG (highest quality), or TIFF if disk space doesn't matter |
 | Folder | e.g. `Pictures\Epson Scan`; subfolders like `Box 1`, `Box 2` are fine |
 

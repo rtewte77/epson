@@ -35,4 +35,6 @@ echo
 echo "Done. Log out and back in once, then start 'Scan photos' from the menu or desktop."
 echo "Scanners visible right now:"
 scanimage -L || true
-echo "No Epson listed? Install Epson's Linux driver for the model (see README)."
+echo "The Perfection V850 Pro is supported by SANE's built-in epson2 driver: it should be"
+echo "listed above (after logging out and back in). Not listed? Check the USB cable and power,"
+echo "then try: sudo scanimage -L   (other models may need Epson's Linux driver, see README)."

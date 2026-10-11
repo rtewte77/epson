@@ -3,7 +3,8 @@
 Windows: WIA (Windows Image Acquisition). Installing Epson's driver for the
     Perfection scanner ("Epson Scan" or "Epson Scan 2" from epson.com) also
     installs its WIA driver. Needs `pip install pywin32`.
-Linux / macOS: SANE's `scanimage`. Epson Perfection models are handled by
+Linux / macOS: SANE's `scanimage`. The Perfection V850 Pro (04b8:0151) is
+    rated "good" by SANE's built-in epson2 backend. Other Epson Perfection models are handled by
     SANE's `epson2`/`epsonds` backends or Epson's "Image Scan! for Linux" /
     "Epson Scan 2" plugins. Whatever shows up in `scanimage -L` works here.
 
